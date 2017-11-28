@@ -30,6 +30,8 @@ import android.net.wifi.WifiScanner.PnoSettings;
 import android.net.wifi.WifiScanner.ScanSettings;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
+import android.os.WorkSource;
 import android.util.LocalLog;
 import android.util.Log;
 
@@ -214,7 +216,7 @@ public class WifiConnectivityManager {
 
         @Override
         public void onAlarm() {
-            startSingleScan(mIsFullBandScan);
+            startSingleScan(mIsFullBandScan, WIFI_WORK_SOURCE);
         }
     }
 
@@ -741,7 +743,7 @@ public class WifiConnectivityManager {
                 localLog("connectToNetwork: Connect to " + targetAssociationId + " from "
                         + currentAssociationId);
             }
-            mStateMachine.startConnectToNetwork(candidate.networkId, targetBssid);
+            mStateMachine.startConnectToNetwork(candidate.networkId, Process.WIFI_UID, targetBssid);
         }
     }
 
@@ -794,7 +796,7 @@ public class WifiConnectivityManager {
             localLog("start a single scan from watchdogHandler");
 
             scheduleWatchdogTimer();
-            startSingleScan(true);
+            startSingleScan(true, WIFI_WORK_SOURCE);
         }
     }
 
@@ -823,7 +825,7 @@ public class WifiConnectivityManager {
         }
 
         mLastPeriodicSingleScanTimeStamp = currentTimeStamp;
-        startSingleScan(isFullBandScan);
+        startSingleScan(isFullBandScan, WIFI_WORK_SOURCE);
         schedulePeriodicScanTimer(mPeriodicSingleScanInterval);
 
         // Set up the next scan interval in an exponential backoff fashion.
@@ -850,7 +852,7 @@ public class WifiConnectivityManager {
     }
 
     // Start a single scan
-    private void startSingleScan(boolean isFullBandScan) {
+    private void startSingleScan(boolean isFullBandScan, WorkSource workSource) {
         if (!mWifiEnabled || !mWifiConnectivityManagerEnabled) {
             return;
         }
@@ -875,7 +877,7 @@ public class WifiConnectivityManager {
 
         SingleScanListener singleScanListener =
                 new SingleScanListener(isFullBandScan);
-        mScanner.startScan(settings, singleScanListener, WIFI_WORK_SOURCE);
+        mScanner.startScan(settings, singleScanListener, workSource);
     }
 
     // Start a periodic scan when screen is on
@@ -1073,7 +1075,7 @@ public class WifiConnectivityManager {
         mWifiState = state;
 
         if (mWifiState == WIFI_STATE_CONNECTED) {
-            mOpenNetworkNotifier.clearPendingNotification(false /* resetRepeatDelay */);
+            mOpenNetworkNotifier.handleWifiConnected();
         }
 
         // Reset BSSID of last connection attempt and kick off
@@ -1084,6 +1086,17 @@ public class WifiConnectivityManager {
             startConnectivityScan(SCAN_IMMEDIATELY);
         } else {
             startConnectivityScan(SCAN_ON_SCHEDULE);
+        }
+    }
+
+    /**
+     * Handler when a WiFi connection attempt ended.
+     *
+     * @param failureCode {@link WifiMetrics.ConnectionEvent} failure code.
+     */
+    public void handleConnectionAttemptEnded(int failureCode) {
+        if (failureCode != WifiMetrics.ConnectionEvent.FAILURE_NONE) {
+            mOpenNetworkNotifier.handleConnectionFailure();
         }
     }
 
@@ -1121,11 +1134,11 @@ public class WifiConnectivityManager {
     /**
      * Handler for on-demand connectivity scan
      */
-    public void forceConnectivityScan() {
-        localLog("forceConnectivityScan");
+    public void forceConnectivityScan(WorkSource workSource) {
+        localLog("forceConnectivityScan in request of " + workSource);
 
         mWaitForFullBandScanResults = true;
-        startSingleScan(true);
+        startSingleScan(true, workSource);
     }
 
     /**
